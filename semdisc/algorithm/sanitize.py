@@ -148,6 +148,27 @@ def delete_all_processed_data():
 
 def copy_datalakes_from_original():
     console.log("---copy_datalakes_from_original")
+    # Future code for copying the original datalake to the current datalake.
+    #     console.log("---copy_datalakes_from_original")
+    #
+    #     original_csv_path = fpm.get_original_csv_path()
+    #     uploaded_datasets_path = fpm.get_uploaded_datasets_path()
+    #
+    #     if not os.path.isdir(original_csv_path):
+    #         raise FileNotFoundError(
+    #             f"Original datalake directory does not exist: {original_csv_path}\n"
+    #             f"Expected CSV files for the current datalake to be placed in this folder.\n"
+    #             f"Create the directory and add the original CSV files, or check your datalake configuration."
+    #         )
+    #
+    #     utils.reset_directory(uploaded_datasets_path)
+    #
+    #     for file_path in tqdm(os.listdir(original_csv_path)):
+    #         source_path = os.path.join(original_csv_path, file_path)
+    #         destination_path = os.path.join(uploaded_datasets_path, file_path)
+    #
+    #         if os.path.isfile(source_path):
+    #             shutil.copy(source_path, destination_path)
     utils.reset_directory(fpm.get_uploaded_datasets_path())
     for file_path in tqdm(os.listdir(fpm.get_original_csv_path())):
         shutil.copy(f"{fpm.get_original_csv_path()}/{file_path}", f"{fpm.get_uploaded_datasets_path()}/{file_path}")
