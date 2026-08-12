@@ -41,7 +41,7 @@ def call_gpt_for_semantic_types(all_dataframes, semantic_type_directory):
             run_gpt=True,
             input=all_column_data,
             temperature=0,
-            model_name=llm_interface.MODEL_4O
+            model_name=llm_interface.MODEL_4O  # change model name
         )
 
         raw_output = result['prediction']['content']

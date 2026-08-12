@@ -1,0 +1,6 @@
+1.pip install -r requuirements.txt
+# use pcount 2 to avoid crashes on low powered machines
+3.python -m semdisc.stages.offline_stage --startstep 3 --endstep 12 --datalake drugcentral --pcount 2 (--parallel False for debugging)
+4.python -m semdisc.stages.online_stage --datalake drugcentral --pcount 2
+
+venv saved uner ~/.venvs/autofeat

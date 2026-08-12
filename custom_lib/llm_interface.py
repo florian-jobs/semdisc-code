@@ -13,10 +13,12 @@ import tiktoken
 import time
 import json
 
-MODEL_4O = "gpt-4o"
+MODEL_4O = "openai/gpt-oss-120b"  # change here to not have to touch anthing else. change from "gpt-4o" to
+# a real openrouter.ai free model slug to use openrouter.ai free
 MODEL_4O_MINI = "gpt-4o-mini"
 MODEL_O1_PREVIEW = "o1-preview"
 MODEL_O1_MINI = "o1-mini"
+MODEL_OPENROUTER_FREE = "openai/gpt-oss-120b"  # free models from openrouter.ai
 
 MODEL_TPM = {
     MODEL_4O: 30000,
@@ -34,20 +36,18 @@ MODEL_RPM = {
 
 tiktoken_approximate_multiplier = 0.48
 
-
-
 def sleep_for_rate_limit(token_count: int, TPM: int, RPM: int):
     # Calculate seconds per token limit
     seconds_per_token = 60 / TPM
     # Calculate the sleep duration for the token limit
     token_limit_duration = token_count * seconds_per_token
-    
+
     # Calculate seconds per request limit
     seconds_per_request = 60 / RPM
-    
+
     # Determine the maximum duration required
     sleep_duration = max(token_limit_duration, seconds_per_request)
-    
+
     # Sleep for the calculated duration
     if sleep_duration > 0:
         console.log(f"Sleeping for {sleep_duration:.2f} seconds to respect rate limits.")
@@ -62,12 +62,12 @@ def get_token_count(text, model_name):
         enc = tiktoken.get_encoding("cl100k_base")
     return len(enc.encode(text))
 
-
 def ai_message_to_dict(ai_message):
     """
     Converts an AIMessage object into a dictionary for JSON serialization.
     Handles nested attributes recursively.
     """
+
     def parse(obj):
         if isinstance(obj, dict):
             return {key: parse(value) for key, value in obj.items()}
@@ -89,7 +89,6 @@ def get_timestamp_for_filename():
     # Combine the two parts
     return f"{timestamp}-{milliseconds}"
 
-
 def get_context_retriever(list_of_strings):
     chunks = []
     for sentence in list_of_strings:
@@ -97,7 +96,7 @@ def get_context_retriever(list_of_strings):
     console.log(f"context retriever found {len(chunks)} documents")
     if len(chunks) == 0:
         return
-    vectorstore = Chroma.from_documents(documents=chunks, embedding = OpenAIEmbeddings())
+    vectorstore = Chroma.from_documents(documents=chunks, embedding=OpenAIEmbeddings())
     llm_context_retriever = vectorstore.as_retriever()
     console.log(f"context retriever updated with {len(chunks)} documents")
     return llm_context_retriever
@@ -127,14 +126,14 @@ llm_recent_output_path = f'{llm_output_directory}/recent.json'
 llm_recent_output_text_path = f'{llm_output_directory}/recent.txt'
 
 def get_natural_text_prompt_and_prediction(result):
-    return f'prompt text start: {"_"*50}\n{result["prompt"]}\nprompt text end: {"_"*50}\nprediction text start: {"_"*50}\n{result["prediction"]["content"]}\nprediction text end: {"_"*50}\n\n{json.dumps(result, indent=4)}'
+    return f'prompt text start: {"_" * 50}\n{result["prompt"]}\nprompt text end: {"_" * 50}\nprediction text start: {"_" * 50}\n{result["prediction"]["content"]}\nprediction text end: {"_" * 50}\n\n{json.dumps(result, indent=4)}'
 
 def save_llm_output_to_file(llm_output, current_timestamp):
     utils.create_directory(llm_output_directory)
     utils.create_directory(llm_previous_output_directory)
     utils.delete(llm_recent_output_path)
     utils.delete(llm_recent_output_text_path)
-    
+
     utils.file_dump(llm_output, llm_recent_output_path)
     utils.file_dump(llm_output, f"{llm_previous_output_directory}/{current_timestamp}.json")
 
@@ -171,22 +170,25 @@ def llm_cache_save(template, input, model_name, temperature, return_object):
 
 def call_gpt_cached(template, run_gpt, input, model_name=MODEL_4O, temperature=0):
     if run_gpt == False:
-        return call_gpt(template=template, context_retriever=None, run_gpt=False, input=input, model_name=model_name, temperature=temperature)
+        return call_gpt(template=template, context_retriever=None, run_gpt=False, input=input, model_name=model_name,
+                        temperature=temperature)  # add base_url ?
 
     cached_result = llm_cache_load(template=template, input=input, model_name=model_name, temperature=temperature)
     if cached_result is not None:
         console.log("GPT returning cached result")
         return cached_result
     console.log("GPT not returning cached result")
-    new_result = call_gpt(template=template, context_retriever=None, run_gpt=run_gpt, input=input, model_name=model_name, temperature=temperature)
-    llm_cache_save(template=template, input=input, model_name=model_name, temperature=temperature, return_object=new_result)
+    new_result = call_gpt(template=template, context_retriever=None, run_gpt=run_gpt, input=input,
+                          model_name=model_name, temperature=temperature)
+    llm_cache_save(template=template, input=input, model_name=model_name, temperature=temperature,
+                   return_object=new_result)
     return new_result
 
 def call_gpt(template, context_retriever, run_gpt, input, model_name, temperature):
     current_timestamp = get_timestamp_for_filename()
     return_object = {
         'prompt': None,
-        'metadata':{
+        'metadata': {
             'estimated_prompt_token_count': None,
             'percentage_deviation_of_estimated_token_count': None,
             'prediction_time_seconds': None,
@@ -197,11 +199,12 @@ def call_gpt(template, context_retriever, run_gpt, input, model_name, temperatur
 
     final_prompt = debug_final_prompt(template=template, context_retriever=context_retriever, input_text=input)
     return_object['prompt'] = final_prompt
-    estimated_prompt_token_count = get_token_count(final_prompt, model_name=model_name)*(1+ tiktoken_approximate_multiplier)
+    estimated_prompt_token_count = get_token_count(final_prompt, model_name=model_name) * (
+            1 + tiktoken_approximate_multiplier)
     return_object['metadata']['estimated_prompt_token_count'] = estimated_prompt_token_count
-    console.log("prompt to gpt start: "+"_"*50)
+    console.log("prompt to gpt start: " + "_" * 50)
     console.log(final_prompt)
-    console.log("prompt to gpt end: "+"_"*50)
+    console.log("prompt to gpt end: " + "_" * 50)
 
     if not run_gpt:
         return return_object
@@ -214,40 +217,55 @@ def call_gpt(template, context_retriever, run_gpt, input, model_name, temperatur
     prompt = ChatPromptTemplate.from_template(template)
 
     if model_name == MODEL_O1_PREVIEW or model_name == MODEL_O1_MINI:
-        llm = ChatOpenAI(model_name=model_name)
+        llm = ChatOpenAI(model_name=model_name, base_url="https://openrouter.ai/api/v1")  # change ai here
+        # llm = ChatOpenAI(model_name="openrouter/free", base_url = "https://openrouter.ai/api/v1")  # change ai here
     else:
-        llm = ChatOpenAI(model_name = model_name, temperature=temperature)
+        llm = ChatOpenAI(model_name=model_name, temperature=temperature,
+                         base_url="https://openrouter.ai/api/v1")  # change ai here
 
     if not context_retriever is None:
         rag_chain = (
-            {"context": context_retriever,
-            "input": RunnablePassthrough()}
-            | prompt
-            | llm
+                {"context": context_retriever,
+                 "input": RunnablePassthrough()}
+                | prompt
+                | llm
         )
     else:
         rag_chain = (
-            {"input": RunnablePassthrough()}
-            | prompt
-            | llm
+                {"input": RunnablePassthrough()}
+                | prompt
+                | llm
         )
 
-    console.log("gpt call start"+"_"*50)
+    console.log("gpt call start" + "_" * 50)
     start_time = time.time()
-    result = rag_chain.invoke(input)
+
+    max_retries = 5
+    result = None
+    for attempt in range(max_retries):
+        result = rag_chain.invoke(input)
+        finish_reason = result.response_metadata.get('finish_reason')
+        if finish_reason != 'error' and result.content.strip():
+            break
+        console.log(
+            f"GPT call failed (finish_reason={finish_reason}, empty_content={not result.content.strip()}), retry {attempt + 1}/{max_retries}")
+        time.sleep(5 * (attempt + 1))
+    else:
+        utils.crash_code(f"GPT call kept returning empty/error results after {max_retries} attempts")
+
     end_time = time.time()
-    console.log("gpt call end"+"_"*50)
-    console.log("result from gpt start: "+"_"*50)
+    console.log("gpt call end" + "_" * 50)
+    console.log("result from gpt start: " + "_" * 50)
     console.log(f"{result}")
-    console.log("result from gpt end: "+"_"*50)
-    
+    console.log("result from gpt end: " + "_" * 50)
+
     return_object['prediction'] = ai_message_to_dict(result)
 
     exact_prompt_token_count = return_object['prediction']['response_metadata']['token_usage']['prompt_tokens']
 
-    return_object['metadata']['percentage_deviation_of_estimated_token_count'] = abs((exact_prompt_token_count - estimated_prompt_token_count)/estimated_prompt_token_count)
+    return_object['metadata']['percentage_deviation_of_estimated_token_count'] = abs(
+        (exact_prompt_token_count - estimated_prompt_token_count) / estimated_prompt_token_count)
     return_object['metadata']['prediction_time_seconds'] = end_time - start_time
 
     save_llm_output_to_file(return_object, current_timestamp)
     return return_object
-
