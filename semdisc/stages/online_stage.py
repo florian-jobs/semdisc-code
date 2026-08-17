@@ -54,7 +54,7 @@ def main():
     found_one_example_in_a_table = 0
 
     # debug_query_id = 'Query 44'
-    debug_query_id = None
+    debug_query_id = "Query 243"
 
     for query_number, query_info in tqdm(enumerate(list(all_queries))):
         user_query = query_info['query']
@@ -87,9 +87,9 @@ def main():
 
 
         console.log(f"get_most_relevant_columns_based_on_search_index_and_example_value_match_count took {utils.get_current_time()-start_time}")
-        # utils.file_dump(console.reduce_data(data=utils.deep_copy(user_query_with_detected_columns), depth=3), f"debug_folder/user_query_with_detected_columns.json")
-        # console.log("user_query_with_detected_columns")
-        # console.log(user_query_with_detected_columns, depth=3)
+        utils.file_dump(console.reduce_data(data=utils.deep_copy(user_query_with_detected_columns), depth=3), f"debug_folder/user_query_with_detected_columns.json")
+        console.log("user_query_with_detected_columns")
+        console.log(user_query_with_detected_columns, depth=3)
 
         # utils.file_dump(console.reduce_data(data=utils.deep_copy(user_query_with_detected_columns), depth=3), f"user_query_with_detected_columns.json")
         start_time = utils.get_current_time()
