@@ -17,7 +17,7 @@ def main():
     fpm.startup()
 
     K_top_paths = 5
-    K_top_semantic_types = 10
+    K_top_semantic_types = 25
     sort_by_rows = True
 
 
