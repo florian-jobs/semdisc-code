@@ -13,12 +13,12 @@ import tiktoken
 import time
 import json
 
-MODEL_4O = "meta-llama/llama-3.3-70b-instruct:free"  # change here to not have to touch anthing else. change from "gpt-4o" to
+MODEL_4O = "openai/gpt-oss-120b"  # change here to not have to touch anthing else. change from "gpt-4o" to
 # a real openrouter.ai free model slug to use openrouter.ai free
 MODEL_4O_MINI = "gpt-4o-mini"
 MODEL_O1_PREVIEW = "o1-preview"
 MODEL_O1_MINI = "o1-mini"
-MODEL_OPENROUTER_FREE = "meta-llama/llama-3.3-70b-instruct:free"  # free models from openrouter.ai
+MODEL_OPENROUTER_FREE = "openai/gpt-oss-120b"  # free models from openrouter.ai
 
 MODEL_TPM = {
     MODEL_4O: 30000,
