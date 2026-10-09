@@ -30,3 +30,4 @@ drawing
 llm_outputs
 semdiscenv
 custom_lib/dotenv/.env
+.venv/
