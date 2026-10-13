@@ -46,6 +46,11 @@ LLM_PROVIDERS = {
     "google": ("https://generativelanguage.googleapis.com/v1beta/openai/", "GOOGLE_API_KEY"),
 }
 
+# 'local': any OpenAI-compatible server (Ollama, vLLM, llama.cpp), not a provider of beluga. Its endpoint is read from
+# LOCAL_LLM_BASE_URL (default: Ollama's) and its API key, which such servers usually ignore, from LOCAL_LLM_API_KEY
+LOCAL_LLM_PROVIDER = "local"
+LOCAL_LLM_BASE_URL = "http://localhost:11434/v1"
+
 sys.path.insert(0, str(SEMDISC_DIR))
 os.chdir(SEMDISC_DIR)
 
@@ -62,12 +67,16 @@ from semdisc.stages import datalake_config, offline_stage
 def configure_llm(provider, model, temperature):
     """Point SemDisc's LLM client at beluga's provider, model and temperature."""
 
-    if provider not in LLM_PROVIDERS:
-        raise ValueError(f"Unsupported LLM provider {provider!r}: use one of {sorted(LLM_PROVIDERS)}")
-    base_url, api_key_variable = LLM_PROVIDERS[provider]
-    api_key = os.environ.get(api_key_variable)
-    if not api_key:
-        raise RuntimeError(f"{api_key_variable} is not set (required for the LLM provider {provider!r}, as in beluga)")
+    if provider == LOCAL_LLM_PROVIDER:
+        base_url = os.environ.get("LOCAL_LLM_BASE_URL") or LOCAL_LLM_BASE_URL
+        api_key = os.environ.get("LOCAL_LLM_API_KEY") or "local"
+    elif provider in LLM_PROVIDERS:
+        base_url, api_key_variable = LLM_PROVIDERS[provider]
+        api_key = os.environ.get(api_key_variable)
+        if not api_key:
+            raise RuntimeError(f"{api_key_variable} is not set (required for the LLM provider {provider!r}, as in beluga)")
+    else:
+        raise ValueError(f"Unsupported LLM provider {provider!r}: use one of {sorted(LLM_PROVIDERS) + [LOCAL_LLM_PROVIDER]}")
     # SemDisc checks OPENAI_API_KEY before every call (custom_lib/dotenvloader.py)
     os.environ["OPENAI_API_KEY"] = api_key
 
@@ -159,7 +168,8 @@ def get_query_semantic_types(query, datalake_dir):
     query_table = f"beluga_query__{query['base_table']}"
     semantic_type_directory = f"{datalake_dir}/beluga_query_semantic_types"
     utils.create_directory(semantic_type_directory)
-    query_df = pd.DataFrame({query_column["column"]: query_column["values"] for query_column in query["columns"]})
+    # The query columns have different numbers of values (missing values are dropped per column): pad them with NaN
+    query_df = pd.DataFrame({query_column["column"]: pd.Series(query_column["values"], dtype=object) for query_column in query["columns"]})
     semantic_type_extractor.call_gpt_for_semantic_types(all_dataframes={query_table: query_df}, semantic_type_directory=semantic_type_directory)
     # Match the ids returned by the LLM to the column names, as in SemDisc's compute_refined_semantic_types_for_missing_responses
     semantic_type_infos = utils.file_load(f"{semantic_type_directory}/{query_table}.json")
