@@ -1,25 +1,15 @@
 """
-Worker for the SemDisc baseline of beluga (evaluation/baselines/semdisc_baseline.py in beluga), meant to be run with
-SemDisc's own Python interpreter (SemDisc requires Python 3.9, beluga >= 3.10). It imports nothing from beluga.
+Worker for beluga's SemDisc baseline (evaluation/baselines/semdisc_baseline.py). Runs with SemDisc's own
+python (3.9) and doesn't import beluga. semdisc_baseline.py starts it as a subprocess in this directory
+after copying the corpus to data/all_datalakes/<datalake>/uploaded_datasets.
 
-Invoked as a subprocess by SemDiscBaseline.run_worker(), from this directory, since SemDisc resolves its data lakes and
-LLM cache relative to the working directory. SemDiscBaseline has already staged the corpus under
-data/all_datalakes/<datalake>/uploaded_datasets.
+The LLM client in custom_lib/llm_interface.py is set to beluga's provider, model and temperature.
 
-LLM: SemDisc's own client (custom_lib/llm_interface.py, an OpenAI-compatible LangChain ChatOpenAI hardcoded to
-OpenRouter) is pointed at the same provider, model and temperature as beluga (llm_provider, llm_id, llm_temperature
-in beluga's configuration), using the same API key environment variable as beluga.
-
-1. Offline: SemDisc's offline stage (semdisc/stages/offline_stage.py) on the staged data lake. Step 3 (semantic types)
-   is run here, with SemDisc's own function (LLM) or the column names (smoke tests); steps 4 to 12 are SemDisc's
-   offline_stage.main() unchanged, with the hyperparameters of the data lake passed by the wrapper. Steps 0-2
-   (sanitize) are replaced by the wrapper's staging. Each part is redone only when its input changes.
-2. Online: SemDisc's online stage (semdisc/stages/online_stage.py, loop body of main()) for one query table: the
-   query columns are the join column and the features of the base table, the example tuples are rows of it. SemDisc
-   detects the lake columns matching every example of each query column, searches join paths connecting them and
-   ranks them by the number of example tuples found in the joined table. Deviations: lake columns of excluded tables
-   (the base table) are dropped, and the candidate columns per query column are capped when their Cartesian product
-   exceeds max_candidate_combinations (SemDisc enumerates it in full, which is meant for queries of 2-5 columns).
+Offline: step 3 of offline_stage.py (semantic types, via LLM or just column names), then offline_stage.main()
+for steps 4-12. Steps 0-2 are replaced by the staging in semdisc_baseline.py.
+Online: loop body of online_stage.py main() for one query table. Query columns are the join column and the
+features of the base table. Changes: the base table's own columns are dropped, and candidates per query
+column are capped by max_candidate_combinations (SemDisc tries all combinations).
 
 Usage: python beluga_worker.py --datalake <name> --query <json path> --output <json path> [--pcount N --parallel False]
        python beluga_worker.py --datalake <name> --query <json path> --build-only   (offline phase only, see
@@ -39,15 +29,14 @@ STAGE_COMPLETE_FILE = "beluga_stage_complete.json"  # written by SemDiscBaseline
 SEMANTIC_TYPES_COMPLETE_FILE = "beluga_semantic_types_complete.json"
 OFFLINE_STAGE_COMPLETE_FILE = "beluga_offline_stage_complete.json"
 
-# OpenAI-compatible endpoints of beluga's LLM providers, with the API key environment variable beluga reads for each
+# beluga's LLM providers: (base_url, api key env var)
 LLM_PROVIDERS = {
     "openrouter": ("https://openrouter.ai/api/v1", "OPENROUTER_API_KEY"),
     "groq": ("https://api.groq.com/openai/v1", "GROQ_API_KEY"),
     "google": ("https://generativelanguage.googleapis.com/v1beta/openai/", "GOOGLE_API_KEY"),
 }
 
-# 'local': any OpenAI-compatible server (Ollama, vLLM, llama.cpp), not a provider of beluga. Its endpoint is read from
-# LOCAL_LLM_BASE_URL (default: Ollama's) and its API key, which such servers usually ignore, from LOCAL_LLM_API_KEY
+# local OpenAI-compatible server (ollama, vllm, ...), set LOCAL_LLM_BASE_URL / LOCAL_LLM_API_KEY
 LOCAL_LLM_PROVIDER = "local"
 LOCAL_LLM_BASE_URL = "http://localhost:11434/v1"
 
@@ -80,14 +69,14 @@ def configure_llm(provider, model, temperature):
     # SemDisc checks OPENAI_API_KEY before every call (custom_lib/dotenvloader.py)
     os.environ["OPENAI_API_KEY"] = api_key
 
-    # SemDisc reads the model from MODEL_4O at call time, and hardcodes OpenRouter's base_url in its ChatOpenAI calls
+    # model comes from MODEL_4O, base_url is hardcoded to openrouter
     llm_interface.MODEL_4O = model
     chat_openai = llm_interface.ChatOpenAI
 
     def chat_openai_for_provider(**kwargs):
         kwargs["base_url"] = base_url
         kwargs["api_key"] = api_key
-        kwargs["temperature"] = temperature  # SemDisc hardcodes temperature=0 in its semantic type prompt
+        kwargs["temperature"] = temperature  # SemDisc uses temperature=0 otherwise
         return chat_openai(**kwargs)
 
     llm_interface.ChatOpenAI = chat_openai_for_provider
@@ -102,8 +91,7 @@ def is_up_to_date(marker_path, info):
 
 
 def build_semantic_types(semantic_type_source):
-    """Step 3 of SemDisc's offline stage (one LLM call per table, cached by SemDisc under custom_lib/llm_outputs/cache),
-    or the column names themselves (no LLM calls, for smoke tests)."""
+    """Offline step 3: semantic types via LLM (cached), or just the column names for smoke tests."""
 
     all_dataframes = db.load_all_dataframes(fpm.get_uploaded_datasets_path())
     if not all_dataframes:
@@ -119,7 +107,7 @@ def build_semantic_types(semantic_type_source):
 
 
 def run_offline_stage(datalake):
-    """Steps 4 to 12 of SemDisc's offline stage, with its own main() (which reads its arguments from the command line)."""
+    """Offline steps 4-12 (offline_stage.main() reads its args from sys.argv)."""
 
     argv = sys.argv
     sys.argv = [argv[0], "--datalake", datalake, "--startstep", "4", "--endstep", "12"] + [
@@ -132,7 +120,7 @@ def run_offline_stage(datalake):
 
 
 def build_index(datalake, query):
-    """Offline phase (see the module docstring), each part redone only when its input changes."""
+    """Offline phase, only reruns parts whose input changed."""
 
     datalake_dir = Path(fpm.get_datalake_path())
     stage_digest = file_digest(datalake_dir / STAGE_COMPLETE_FILE)
@@ -168,10 +156,10 @@ def get_query_semantic_types(query, datalake_dir):
     query_table = f"beluga_query__{query['base_table']}"
     semantic_type_directory = f"{datalake_dir}/beluga_query_semantic_types"
     utils.create_directory(semantic_type_directory)
-    # The query columns have different numbers of values (missing values are dropped per column): pad them with NaN
+    # columns have different lengths after dropping NaNs, pad them
     query_df = pd.DataFrame({query_column["column"]: pd.Series(query_column["values"], dtype=object) for query_column in query["columns"]})
     semantic_type_extractor.call_gpt_for_semantic_types(all_dataframes={query_table: query_df}, semantic_type_directory=semantic_type_directory)
-    # Match the ids returned by the LLM to the column names, as in SemDisc's compute_refined_semantic_types_for_missing_responses
+    # map LLM ids back to column names (like compute_refined_semantic_types_for_missing_responses)
     semantic_type_infos = utils.file_load(f"{semantic_type_directory}/{query_table}.json")
     ids = [str(x["id"]) for x in semantic_type_infos]
     semantic_types = dict()
@@ -183,8 +171,7 @@ def get_query_semantic_types(query, datalake_dir):
 
 
 def cap_candidate_columns(user_query_with_detected_columns, max_candidate_combinations):
-    """Keep the best candidate columns of each query column (most matched examples first, as sorted by SemDisc) so that
-    the number of candidate paths (their Cartesian product) stays below max_candidate_combinations."""
+    """Cap candidates per query column so the number of combinations stays below max_candidate_combinations."""
 
     counts = [len(x["top_columns_by_semantic_type"]) for x in user_query_with_detected_columns]
     if math.prod(counts) <= max_candidate_combinations:
@@ -196,7 +183,7 @@ def cap_candidate_columns(user_query_with_detected_columns, max_candidate_combin
 
 
 def find_join_orders(query, semantic_types):
-    """SemDisc's online stage for one query table (loop body of semdisc/stages/online_stage.py's main())."""
+    """Online stage for one query table (loop body of online_stage.py main())."""
 
     all_dataframes = db.load_all_dataframes(fpm.get_uploaded_datasets_path())
     all_simhashes = semantic_hash_index.load_all_simhashes()
@@ -224,7 +211,7 @@ def find_join_orders(query, semantic_types):
 
     user_query_with_detected_columns = online_query_table_processor.get_most_relevant_columns_based_on_search_index_and_example_value_match_count(
         user_query=user_query,
-        # FAISS pads the results with -1 when K exceeds the number of indexed columns
+        # faiss returns -1 if K > number of columns
         K_semantic_type=min(query["k_semantic_types"], hnsw_index.ntotal),
         search_index=hnsw_index,
         all_semantic_type_infos=all_semantic_type_infos,
@@ -235,7 +222,7 @@ def find_join_orders(query, semantic_types):
         tables_without_path=tables_without_path
     )
 
-    # The base table cannot retrieve itself if it belongs to the corpus
+    # skip the base table if it's in the corpus
     exclude_tables = set(query["exclude_tables"])
     for query_column in user_query_with_detected_columns:
         query_column["top_columns_by_semantic_type"] = [x for x in query_column["top_columns_by_semantic_type"] if x["table"] not in exclude_tables]
@@ -295,7 +282,7 @@ def find_join_orders(query, semantic_types):
         enriched_best_join_orders.append({
             "path": list(join_order_info["path"]),
             "join_order": join_order,
-            # Lake column detected for each query column, in query order
+            # matched lake column per query column
             "detected_columns": [
                 {"query_column": query_column["column"], "table": detected_column["table"], "column": str(detected_column["column"])}
                 for query_column, detected_column in zip(query["columns"], detected_columns)
@@ -305,7 +292,7 @@ def find_join_orders(query, semantic_types):
         if whole_example_row_find_count == example_row_count:
             break
 
-    # Most example tuples found first (SemDisc's criterion), ties in SemDisc's order
+    # sort by number of example tuples found
     enriched_best_join_orders.sort(key=lambda x: -x["whole_example_row_find_count"])
 
     return enriched_best_join_orders
