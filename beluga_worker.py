@@ -9,7 +9,8 @@ Offline: step 3 of offline_stage.py (semantic types, via LLM or just column name
 for steps 4-12. Steps 0-2 are replaced by the staging in semdisc_baseline.py.
 Online: loop body of online_stage.py main() for one query table. Query columns are the join column and the
 features of the base table. Changes: the base table's own columns are dropped, and candidates per query
-column are capped by max_candidate_combinations (SemDisc tries all combinations).
+column are capped by max_candidate_combinations (SemDisc tries all combinations), and the LLM's semantic type
+answers are parsed leniently (parse_semantic_types), with the column name as fallback.
 
 Usage: python beluga_worker.py --datalake <name> --query <json path> --output <json path> [--pcount N --parallel False]
        python beluga_worker.py --datalake <name> --query <json path> --build-only   (offline phase only, see
@@ -17,10 +18,12 @@ Usage: python beluga_worker.py --datalake <name> --query <json path> --output <j
 """
 
 import argparse
+import ast
 import hashlib
 import json
 import math
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -82,6 +85,80 @@ def configure_llm(provider, model, temperature):
     llm_interface.ChatOpenAI = chat_openai_for_provider
 
 
+# How the semantic type answers were parsed (see parse_semantic_types), reported after the build
+semantic_type_parsing = {"strict": 0, "repaired": 0, "id_name_pairs": 0, "unusable": 0, "header_fallback_columns": 0}
+ID_NAME_PAIR = re.compile(r"""["']id["']\s*:\s*["']?(.*?)["']?\s*,\s*["']name["']\s*:\s*["'](.*?)["']\s*}""", re.S)
+
+
+def is_semantic_type_list(data):
+    return isinstance(data, list) and all(isinstance(x, dict) and "id" in x and "name" in x for x in data)
+
+
+def parse_semantic_types(text):
+    """SemDisc's extract_json_from_string, but tolerant of almost-JSON answers of small models (e.g. Llama 3.1 8B:
+    trailing commas, code fences, single quotes), which SemDisc's strict parser rejects, aborting the whole build.
+    Returns [] if nothing usable is found (compute_refined_semantic_types then falls back to the column names)."""
+
+    try:
+        data = utils.extract_json_from_string(text)
+        if is_semantic_type_list(data):
+            semantic_type_parsing["strict"] += 1
+            return [{"id": str(x["id"]), "name": str(x["name"])} for x in data]
+    except ValueError:
+        pass
+    start, end = text.find("["), text.rfind("]")
+    if start != -1 and end > start:
+        candidate = re.sub(r",\s*([\]}])", r"\1", text[start:end + 1])
+        for loads in (json.loads, ast.literal_eval):
+            try:
+                data = loads(candidate)
+            except (ValueError, SyntaxError):
+                continue
+            if is_semantic_type_list(data):
+                semantic_type_parsing["repaired"] += 1
+                return [{"id": str(x["id"]), "name": str(x["name"])} for x in data]
+    pairs = [{"id": id_.strip(), "name": name.strip()} for id_, name in ID_NAME_PAIR.findall(text)]
+    if pairs:
+        semantic_type_parsing["id_name_pairs"] += 1
+        return pairs
+    semantic_type_parsing["unusable"] += 1
+    return []
+
+
+def compute_refined_semantic_types(semantic_type_directory, all_dataframes):
+    """SemDisc's compute_refined_semantic_types_for_missing_responses (each column gets the semantic type of the most
+    similar id in the answer), but columns no id resembles at all, or tables without a usable answer, get their
+    column name as semantic type (as with --semantic-type-source header) instead of crashing."""
+
+    for table, dataframe in all_dataframes.items():
+        answers = utils.file_load(f"{semantic_type_directory}/{table}.json")
+        ids = [answer["id"] for answer in answers]
+        refined_semantic_types = []
+        for column in dataframe.columns:
+            best_id = utils.best_match_difflib(strings=ids, query=column)
+            if best_id is None:
+                semantic_type_parsing["header_fallback_columns"] += 1
+                refined_semantic_types.append({"column": column, "semantic_type": column, "id_by_gpt": None})
+            else:
+                refined_semantic_types.append({"column": column, "semantic_type": answers[ids.index(best_id)]["name"], "id_by_gpt": best_id})
+        utils.file_dump(refined_semantic_types, f"{semantic_type_directory}/{table}.json")
+
+
+class LenientSemanticTypeUtils:
+    """custom_lib.utils with parse_semantic_types as extract_json_from_string, only for semantic_type_extractor
+    (online_query_table_processor parses other answers with the original)."""
+
+    extract_json_from_string = staticmethod(parse_semantic_types)
+
+    def __getattr__(self, name):
+        return getattr(utils, name)
+
+
+def use_lenient_semantic_types():
+    semantic_type_extractor.utils = LenientSemanticTypeUtils()
+    semantic_type_extractor.compute_refined_semantic_types_for_missing_responses = compute_refined_semantic_types
+
+
 def file_digest(path):
     return hashlib.md5(Path(path).read_bytes()).hexdigest()
 
@@ -99,6 +176,8 @@ def build_semantic_types(semantic_type_source):
     if semantic_type_source == "llm":
         utils.reset_directory(semantic_type_extractor.get_semantic_type_directory())
         semantic_type_extractor.get_and_save_semantic_types(all_dataframes=all_dataframes)
+        print(f"Semantic type answers: {semantic_type_parsing}", flush=True)
+        utils.file_dump(semantic_type_parsing, f"{fpm.get_datalake_path()}/beluga_semantic_type_parsing.json")
     else:
         semantic_type_extractor.save_all_semantic_types_single_file([
             {"table": table, "column": column, "semantic_type": column}
@@ -317,6 +396,7 @@ def main():
 
     if query["semantic_type_source"] == "llm":
         configure_llm(query["llm_provider"], query["llm_id"], query["llm_temperature"])
+        use_lenient_semantic_types()
 
     build_index(args.datalake, query)
 
