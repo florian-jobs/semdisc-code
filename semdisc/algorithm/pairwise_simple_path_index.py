@@ -13,6 +13,7 @@ import networkx as nx
 import math
 import numpy as np
 from tqdm import tqdm
+from scipy.sparse import csr_matrix
 
 import itertools
 import os
@@ -224,10 +225,9 @@ def get_best_path_from_tables(initial_tables, all_paths, tqdm_enabled=True):
 
 def get_best_path_indexes_from_tables_using_table_path_inverted_index(initial_tables, all_paths, all_table_indices, table_to_path_index, tqdm_enabled=True):
     initial_table_indices = [all_table_indices.index(item) for item in initial_tables]
-    path_indices_with_initial_tables = np.where(np.all(table_to_path_index[initial_table_indices] == 1, axis=0))[0]
-    # paths_with_initial_tables = [all_paths[idx] for idx in path_indices_with_initial_tables]
-
-    # return sort_path_infos_with_length(paths_with_initial_tables)
+    selected_rows = table_to_path_index[initial_table_indices]
+    column_sums = np.asarray(selected_rows.sum(axis=0)).ravel()
+    path_indices_with_initial_tables = np.flatnonzero(column_sums == len(initial_tables))
     return path_indices_with_initial_tables
 
 def gather_pickled_paths_of_node_pairs():
@@ -335,14 +335,35 @@ def load_all_join_order():
 def save_all_join_order(all_join_order):
     utils.file_dump(all_join_order, get_all_join_order_json_path())
 
+# Old algorithm: Generates |D| x |P| inverted join path binary matrix.
+# def compute_table_to_path_index(all_simple_paths, all_dataframes):
+#     table_index_map = list(all_dataframes.keys())
+#     table_to_path_index = np.zeros((len(table_index_map),len(all_simple_paths)), dtype=int)
+#     for table_index, table in tqdm(enumerate(table_index_map)):
+#         for path_index, path in enumerate(all_simple_paths):
+#             if table in path:
+#                 table_to_path_index[table_index][path_index] = 1
+#
+#     return table_to_path_index, table_index_map
+
+# New Algorithm: the same matrix as a sparse boolean CSR matrix (only its True cells are stored), built from the tables
+# of each path (O(|P| * L)) instead of checking every table against every path (O(|D| * |P|)).
 def compute_table_to_path_index(all_simple_paths, all_dataframes):
     table_index_map = list(all_dataframes.keys())
-    table_to_path_index = np.zeros((len(table_index_map),len(all_simple_paths)), dtype=int)
-    for table_index, table in tqdm(enumerate(table_index_map)):
-        for path_index, path in enumerate(all_simple_paths):
-            if table in path:
-                table_to_path_index[table_index][path_index] = 1
+    table_position = {table: i for i, table in enumerate(table_index_map)}
 
+    rows = []
+    columns = []
+    for path_index, path in enumerate(all_simple_paths):
+        for table in set(path):  # a table counts once per path, as with "table in path"
+            if table in table_position:
+                rows.append(table_position[table])
+                columns.append(path_index)
+
+    table_to_path_index = csr_matrix(
+        (np.ones(len(rows), dtype=bool), (np.array(rows, dtype=np.int64), np.array(columns, dtype=np.int64))),
+        shape=(len(table_index_map), len(all_simple_paths))
+    )
     return table_to_path_index, table_index_map
 
 def evaluate_candidate_path_based_on_row_matches(candidate_path):
